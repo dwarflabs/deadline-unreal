@@ -10,6 +10,20 @@ For further documentation on this plugin, please refer to the [Unreal Engine 5](
 > The engine will automatically add this library to the Python path and make it 
 > available to the Python interpreter.
 
+# Unreal Movie Pipeline Deadline plugin
+
+Although usage documentation for this plugin is a work in progress, 
+it does not limit the use of other Deadline service features. 
+This plugin serves as an example of how to use the aforementioned Deadline services.
+
+> **_Note:_** 
+> Currently, it is recommended to build the Engine from source as the current 
+> state of the plugins do not have compiled versions for the released Editor binaries. 
+> Building the Engine from source allows you to install the necessary dependencies 
+> for compiling the Engine plugins locally. This issue will be remedied in future releases. Follow 
+> the instructions on [Downloading Unreal Engine Source Code](https://docs.unrealengine.com/5.1/en-US/downloading-unreal-engine-source-code/) 
+> to download the Engine versions from source and build the Engine locally.
+
 # Local Testing
 
 To test the functionality of the plugins, use the [Meerkat Demo](https://www.unrealengine.com/marketplace/en-US/product/meerkat-demo-02)

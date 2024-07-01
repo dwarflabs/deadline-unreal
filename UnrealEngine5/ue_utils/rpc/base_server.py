@@ -146,8 +146,8 @@ class BaseRPCServer:
             if path not in sys.path:
                 sys.path.append(path)
 
-        # run the function code
-        exec(code)
+        # run the function code - exec is needed and a known risk.
+        exec(code) # nosec B102
         callable_instance = locals().copy().get(callable_name)
 
         # grab it from the locals and register it with the server
