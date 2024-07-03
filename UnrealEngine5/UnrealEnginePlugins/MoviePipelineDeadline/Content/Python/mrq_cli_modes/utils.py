@@ -257,7 +257,10 @@ def set_job_state(job, enable=False):
             shot.enabled = False
 
 
-def update_render_output(job, output_dir=None, output_filename=None):
+def update_render_output(
+    job,
+    output_dir=None, output_filename=None, override_output=None
+):
     """
     Updates that output directory and filename on a render job
 
@@ -284,10 +287,17 @@ def update_render_output(job, output_dir=None, output_filename=None):
 
     if output_filename:
         unreal.log_warning(
-            "Overriding filename format! New format is `{output_filename}`."
+            f"Overriding filename format! New format is `{output_filename}`."
         )
 
         output_setting.file_name_format = output_filename
+
+    if override_output != None and override_output != output_setting.override_existing_output:
+        unreal.log_warning(
+            f"Overriding output files: `{str(override_output)}`."
+        )
+
+        output_setting.override_existing_output = override_output
 
 
 def update_queue(

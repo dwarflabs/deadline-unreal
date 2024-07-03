@@ -114,7 +114,7 @@ class DeadlineCommand:
             f_plugin.close()
 
             args = [self.deadlineCommand, "-SubmitJob", f_job.name, f_plugin.name]   
-            args.extend(job_data["aux_files"]) if "aux_files" in job_data else None  #  If aux files present extend args
+            args.extend(job_data["AuxFiles"]) if "AuxFiles" in job_data else None  #  If aux files present extend args
             # Specifying PIPE for all handles to workaround a Python bug on Windows. The unused handles are then closed immediatley afterwards.
             logger.debug(f"Submitting job via deadlinecommand with subprocess args: {args}")
             proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)

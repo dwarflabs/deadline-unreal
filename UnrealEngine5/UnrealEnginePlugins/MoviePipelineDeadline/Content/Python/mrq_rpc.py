@@ -66,9 +66,11 @@ class MRQRender(BaseRPC):
         :return:
         """
         if not self._manifest:
-            serialized_pipeline = self.proxy.get_job_extra_info_key_value(
-                "serialized_pipeline"
-            )
+            serialized_pipeline = os.environ.get("override_serialized_pipeline")
+            if not serialized_pipeline:
+                serialized_pipeline = self.proxy.get_job_extra_info_key_value(
+                    "serialized_pipeline"
+                )
             if not serialized_pipeline:
                 return
 

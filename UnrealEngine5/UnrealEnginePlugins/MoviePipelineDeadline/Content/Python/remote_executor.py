@@ -1,9 +1,10 @@
 # Copyright Epic Games, Inc. All Rights Reserved
 
 # Built-In
+import getpass
+import json
 import os
 import re
-import json
 import traceback
 from collections import OrderedDict
 
@@ -13,6 +14,132 @@ import unreal
 from deadline_service import get_global_deadline_service_instance
 from deadline_job import DeadlineJob
 from deadline_utils import get_deadline_info_from_preset
+
+from P4 import P4, P4Exception
+
+p4 = P4()
+p4.port = os.environ.get("P4PORT", "NoPort")
+p4.user = os.environ.get("P4USER", os.getlogin())
+p4.password = os.environ.get("P4PASSWD", "NoPassword")
+
+
+def create_shot_list(sequence, shots_to_render, target_size, ignore_chunk_size=False):
+    # find the shot track in the sequence
+    shots_track = sequence.find_tracks_by_exact_type(unreal.MovieSceneCinematicShotTrack)
+    if not shots_track or len(shots_track) > 1:
+        result = unreal.EditorDialog.show_message(
+            "Deadline job submission",
+            f"Found none or more than 1 shot tracks in given sequence, cannot pack shots from ChunkSize. Continue without packing ?",
+            unreal.AppMsgType.YES_NO,
+            default_value=unreal.AppReturnType.YES
+        )
+
+        if result == unreal.AppReturnType.YES:
+            ignore_chunk_size = True
+        else:
+            raise RuntimeError("Found none or more than 1 shot tracks in given sequence, cannot pack shots from ChunkSize.")
+    else:
+        shots_track = shots_track[0]
+
+    # create shot list of tuples containing shot name and frame count
+    shot_weights = []
+    if ignore_chunk_size:
+        target_size = 1
+        shot_weights = [(s, idx, 1) for idx, s in enumerate(shots_to_render)]
+    else:
+        for section in shots_track.get_sections():
+            start_frame = unreal.MovieSceneSectionExtensions.get_start_frame(section)
+            end_frame = unreal.MovieSceneSectionExtensions.get_end_frame(section)
+            frame_count = end_frame - start_frame
+            shot_seq = section.get_editor_property('sub_sequence')
+            shot_name = shot_seq.get_name()
+            # need to find shot name as denominated in the job (which is shotseqname.subseqname)
+            shot_name = [s for s in shots_to_render if shot_name in s]
+            # skip shot not found in shots_to_render (most probably because it is deactivated)
+            if not shot_name:
+                continue
+            shot_name = shot_name[0]
+            # remove the shot from the list, to avoid using the same one when multiple shots have the same name
+            # (sequence name will give exact same name, while in shots_to_render same names are extended with a number in braces)
+            shots_to_render.remove(shot_name)
+            # add shot info to list
+            shot_weights.append((shot_name, start_frame, frame_count))
+
+    # sort by decreasing order
+    shot_weights.sort(key=lambda x: x[1], reverse=True)
+    min_weight = shot_weights[-1][1]
+
+    # pack shots together based on target frame count
+    shots = {}
+    added_shots = []
+    frame_list = []
+    task_index = 0
+    last_frame = sequence.get_playback_end()
+    for shot, start_frame, weight in shot_weights:
+        if shot in added_shots:
+            continue
+
+        # add shot to current bin
+        current_size = weight
+        current_bin = [shot]
+        added_shots.append(shot)
+
+        # bin can have more, search for more to add
+        # only if it would be possible to add at least the smallest shot, otherwise don't bother
+        while(current_size + min_weight <= target_size):
+            best_shot = None
+            best_weight = 0
+            min_diff = 1000000
+            for other_shot, _, other_weight in shot_weights:
+                if other_shot in added_shots:
+                    continue
+
+                # check absolute difference between target_size and size with this weight added
+                diff = abs(target_size - (current_size + other_weight))
+
+                # if difference is smaller than before found, replace best match with this one
+                if diff < min_diff:
+                    min_diff = diff
+                    best_shot = other_shot
+                    best_weight = other_weight
+
+            # add found best shot to current bin
+            if best_shot:
+                current_size += best_weight
+                current_bin.append(best_shot)
+                added_shots.append(best_shot)
+            # not match found, cannot add more
+            else:
+                break
+
+        # bin is full, add the shots to the task list
+        shots[str(task_index)] = ",".join(current_bin)
+
+        # compute frame range for the task
+        #   tasks of only 1 shot uses the actual shot frame range
+        #   tasks of multiple shots uses a fake frame range that starts from the last frame of the sequence
+        if len(current_bin) == 1:
+            end_frame = start_frame + current_size - 1
+        else:
+            start_frame = last_frame
+            end_frame = start_frame + current_size - 1
+            last_frame = end_frame + 1
+
+        frame_list.append(f"{start_frame}-{end_frame}")
+
+        unreal.log(
+            "task " + str(task_index) +
+            "\n  frame range " + str(start_frame) + "-" + str(end_frame) +
+            "\n  total frame count " + str(current_size) +
+            "\n  shot count " + str(len(current_bin)) +
+            "\n  shots " + str(current_bin)
+        )
+        task_index += 1
+
+    # sort in reverse order, to prevent Deadline from merging sequencial frame ranges into a single one
+    frame_list = sorted(frame_list, key=lambda x: int(x.split("-")[0]), reverse=True)
+
+    return shots, frame_list, not ignore_chunk_size
 
 
 @unreal.uclass()
@@ -138,10 +265,6 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
             )
         )
 
-        command_args.extend(
-            ["-nohmd", "-windowed", f"-ResX=1280", f"-ResY=720"]
-        )
-
         # Get the project level preset
         project_preset = deadline_settings.default_job_preset
 
@@ -160,6 +283,16 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         deadline_service = get_global_deadline_service_instance()
 
         for job in self.pipeline_queue.get_jobs():
+
+            # Don't send disabled jobs on Deadline
+            if not job.is_enabled():
+                unreal.log(f"Ignoring disabled Job `{job.job_name}`")
+                continue
+
+            # Don't process jobs without job preset assigned, it crashes the editor
+            if not job.job_preset:
+                unreal.log(f"Ignoring Job without DeadlineJobPreset assigned `{job.job_name}`")
+                continue
 
             unreal.log(f"Submitting Job `{job.job_name}` to Deadline...")
 
@@ -180,7 +313,7 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                 self.on_executor_errored_impl(None, True, str(err))
                 unreal.EditorDialog.show_message(
                     "Submission Result",
-                    f"Failed to submit job `{job.job_name}` to Deadline with error: {str(err)}. "
+                    f"Failed to submit job `{job.job_name}` to Deadline with error:\n{str(err)}. "
                     f"See log for more details.",
                     unreal.AppMsgType.OK,
                 )
@@ -214,11 +347,15 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         # update on them so that they transition from "Ready" to "Queued" or
         # their actual status in Deadline. self.request_job_status_update(
         # deadline_service)
+        message = ""
+        if not len(self.job_ids):
+            message = "No jobs were sent to Deadline, check if enabled."
+        else:
+            message = (
+                f"Successfully submitted {len(self.job_ids)} jobs to Deadline. JobIds: {', '.join(self.job_ids)}. "
+                f"\nPlease use Deadline Monitor to track render job statuses"
+            )
 
-        message = (
-            f"Successfully submitted {len(self.job_ids)} jobs to Deadline. JobIds: {', '.join(self.job_ids)}. "
-            f"\nPlease use Deadline Monitor to track render job statuses"
-        )
         unreal.log(message)
 
         unreal.EditorDialog.show_message(
@@ -271,6 +408,76 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         elif not plugin_info["ProjectFile"]:
             raise RuntimeError(f"An error occurred formatting the Plugin Info string. \n\tProjectFile value cannot be empty")
 
+        auxilliary_files = []
+
+        # get PreJobScript and check that it is an existing full path
+        pre_job_script = job_info.get('PreJobScript')
+        if pre_job_script and not os.path.exists(pre_job_script):
+            raise RuntimeError(f"PreJobScript path provided is not a valid path: {pre_job_script}")
+
+        # default PreJobScript is PreJob.py file that is included in this plugin
+        if not pre_job_script:
+            job_info['PreJobScript'] = 'PreJob.py'
+            auxilliary_files.append(os.path.join(os.path.dirname(__file__), "PreJob.py"))
+
+        # check for Perforce required field in jobInfo
+        environment_key_values = {}
+        environment_key_indices = {}
+        current_env_index = 0
+        for key, value in job_info.items():
+            if key.startswith('EnvironmentKeyValue'):
+                sub_key, sub_val = value.split('=')
+                environment_key_values[sub_key] = sub_val
+                environment_key_indices[sub_key] = int(key.replace('EnvironmentKeyValue', ''))
+                current_env_index += 1
+
+        p4_cl = environment_key_values.get('P4_CL', -1)
+        # p4_stream = environment_key_values.get('P4_stream', 'main')
+        p4_workspace_prefix = environment_key_values.get('P4_workspace_prefix')
+
+        # Connect to Perforce Server
+        with p4.connect():
+            # check changelist validity
+            try:
+                p4_cl = int(p4_cl)
+                changelist = p4.run("changelist", "-o", p4_cl)
+
+                # changelist may exists locally
+                if changelist[0]['Status'] != 'submitted':
+                    raise P4Exception("Changelist is not submitted.")
+
+            except Exception as err:
+                # get latest submitted CL and ask user if we should use latest submitted changelist instead
+                latest_cl = p4.run_changes("-s", "submitted", "-m", "1")[0]
+                result = unreal.EditorDialog.show_message(
+                    "Deadline job submission",
+                    f"Provided P4 CL ({p4_cl}) is invalid, do you want to use latest submitted CL number {latest_cl['change']} - {latest_cl['desc']} ?",
+                    unreal.AppMsgType.YES_NO,
+                    default_value=unreal.AppReturnType.YES
+                )
+
+                # replace environment variable with latest changelist number
+                if result == unreal.AppReturnType.YES:
+                    cl_index = environment_key_indices['P4_CL']
+                    job_info[f"EnvironmentKeyValue{cl_index}"] = f"P4_CL={latest_cl['change']}"
+                # else raise
+                else:
+                    unreal.log_error(err)
+                    raise RuntimeError(
+                        f"Provided P4 CL ({p4_cl}) is invalid, cannot create job."
+                    )
+
+            # TODO: check stream validity
+
+        # if workspace prefix is not provided, use project name
+        if not p4_workspace_prefix:
+            project_path = unreal.Paths.get_project_file_path()
+            p4_workspace_prefix, _ = os.path.splitext(os.path.basename(project_path))
+
+            # add P4_workspace_prefix in job info
+            job_info[f"EnvironmentKeyValue{current_env_index}"] = f"P4_workspace_prefix={p4_workspace_prefix}"
+            current_env_index += 1
+
         # Update the job info with overrides from the UI
         if job.batch_name:
             job_info["BatchName"] = job.batch_name
@@ -281,8 +488,11 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         if not job_info.get("Name") or job_info["Name"] == "Untitled":
             job_info["Name"] = job.job_name
 
-        if job.author:
-            job_info["UserName"] = job.author
+        # Make sure a username is set
+        # Priority to job.author, then job_info, finally session user
+        username = job.author or job_info.get("UserName") or getpass.getuser()
+        job.author = username
+        job_info["UserName"] = username
 
         if unreal.Paths.is_project_file_path_set():
             # Trim down to just "Game.uproject" instead of absolute path.
@@ -305,6 +515,13 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         duplicated_queue, manifest_path = unreal.MoviePipelineEditorLibrary.save_queue_to_manifest_file(
             new_queue
         )
+
+        # check that the config contains GameOverrides settings
+        game_setting = new_job.get_configuration().find_setting_by_class(
+            unreal.MoviePipelineGameOverrideSetting
+        )
+        if not game_setting:
+            raise RuntimeError("Config should contain GameOverride settings.")
 
         # Convert the queue to text (load the serialized json from disk) so we
         # can send it via deadline, and deadline will write the queue to the
@@ -338,6 +555,9 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
             if setting.get_class() == unreal.MoviePipelineGameOverrideSetting.static_class():
                 game_override_class = setting.game_mode_override
 
+        # custom prescript to execute stuff right when Unreal loads
+        out_exec_cmds.append("py custom_unreal_prescript.py")
+
         # This triggers the editor to start looking for render jobs when it
         # finishes loading.
         out_exec_cmds.append("py mrq_rpc.py")
@@ -369,6 +589,7 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         # generate a list, otherwise we make unneeded tasks which get sent to
         # machines
         shots_to_render = []
+        shots_inner_name = []
         for shot_index, shot in enumerate(new_job.shot_info):
             if not shot.enabled:
                 unreal.log(
@@ -376,7 +597,23 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                     f"to server due to being already disabled!"
                 )
             else:
+                # check inner names, as those are not made unique by Unreal, while same outer names are appended with a number in braces..
+                if shot.inner_name in shots_inner_name:
+                    result = unreal.EditorDialog.show_message(
+                        "Deadline job submission",
+                        f"Found twice the same shot name ({shot.inner_name, shot.outer_name}), it may cause issues when writing files if using shot_name or frame_number_shot in folder and frame name."
+                        "\nWould you like to submit anyway ?    Else, consider renaming the shots in the sequence (not the shot assets)",
+                        unreal.AppMsgType.YES_NO,
+                        default_value=unreal.AppReturnType.NO
+                    )
+
+                    # return if user chose to not send the job like this
+                    if result != unreal.AppReturnType.YES:
+                        unreal.log_error(f"Found twice the same shot name ({shot.inner_name, shot.outer_name})")
+                        return
+
                 shots_to_render.append(shot.outer_name)
+                shots_inner_name.append(shot.inner_name)
 
         # If there are no shots enabled,
         # "these are not the droids we are looking for", move along ;)
@@ -387,6 +624,7 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
 
         # Divide the job to render by the chunk size
         # i.e {"O": "my_new_shot"} or {"0", "shot_1,shot_2,shot_4"}
+        '''
         chunk_size = int(job_info.get("ChunkSize", 1))
         shots = {}
         frame_list = []
@@ -397,6 +635,32 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
             frame_list.append(str(index))
 
         job_info["Frames"] = ",".join(frame_list)
+        '''
+
+        # Divide the job to render by the chunk size
+        # ChunkSize is counted in frames, and the goal is to create tasks of 1 or more shots
+        # totalling approximatively ChunkSize frames
+        # NOTE: could automagically determine ChunkSize based on the different shots length ?
+        target_size = int(job_info.get("ChunkSize", 100))
+
+        # force ChunkSize to a large number, to prevent Deadline from splitting the tasks more than what we give
+        job_info["ChunkSize"] = "1000000"
+
+        # get sequence and create frame list for deadline
+        sequence = unreal.SystemLibrary.conv_soft_obj_path_to_soft_obj_ref(new_job.sequence)
+        shots, frame_list, has_frame_range = create_shot_list(sequence, shots_to_render, target_size)
+
+        job_info["Frames"] = ",".join(frame_list)
+        unreal.log(f'frame list: {job_info["Frames"]}')
+
+        # enable frame timeout, so that task timeout changes based on actual frame count
+        # TODO: add on Job Preset object
+        if has_frame_range:
+            job_info["EnableFrameTimeouts"] = "1"
+        # not using frame ranges, so increase task timeout
+        else:
+            job_info["TaskTimeoutSeconds"] = "3600"
+            job_info["EnableFrameTimeouts"] = "0"
 
         # Get the current index of the ExtraInfoKeyValue pair, we will
         # increment the index, so we do not stomp other settings
@@ -427,6 +691,8 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                 job_info[f"ExtraInfoKeyValue{current_index}"] = f"output_directory_override={new_job.output_directory_override.path}"
 
                 current_index += 1
+            else:
+                raise RuntimeError("Output directory override cannot be empty.")
 
         # Set the job filename format override on the deadline job
         if hasattr(new_job, "filename_format_override"):
@@ -434,6 +700,35 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                 job_info[f"ExtraInfoKeyValue{current_index}"] = f"filename_format_override={new_job.filename_format_override}"
 
                 current_index += 1
+
+        # Tell Deadline job about output directory and filename
+        output_setting = new_job.get_configuration().find_setting_by_class(
+            unreal.MoviePipelineOutputSetting
+        )
+
+        # TODO: Resolve path formatting based on render settings to make it understandable by Deadline
+        job_info["OutputDirectory0"] = new_job.output_directory_override.path or output_setting.output_directory.path
+
+        # TODO: Resolve filename format based on render settings to make it understandable by Deadline
+        job_info["OutputFilename0"] = new_job.filename_format_override or output_setting.file_name_format
+
+        # add map path to job environment, to be used to preload it
+        map_path = unreal.SystemLibrary.conv_soft_obj_path_to_soft_obj_ref(new_job.map).get_path_name()
+        job_info[f"EnvironmentKeyValue{current_env_index}"] = f"UEMAP_PATH={map_path}"
+        current_env_index += 1
+
+        # Force override of output files, to avoid multiple files when task fails and restart
+        job_info[f"EnvironmentKeyValue{current_env_index}"] = f"override_output=1"
+        current_env_index += 1
+
+        command_args.extend(["-nohmd", "-windowed"])
+
+        # Add resolution to commandline arguments
+        # to force considering render settings' output resolution instead of limiting to screen resolution
+        output_resolution = output_setting.output_resolution
+        command_args.append(f"-ResX={output_resolution.x}")
+        command_args.append(f"-ResY={output_resolution.y}")
+        command_args.append(f"-ForceRes")
 
         # Build the command line arguments the remote machine will use.
         # The Deadline plugin will provide the executable since it is local to
@@ -464,9 +759,13 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         plugin_info.update(
             {
                 "CommandLineArguments": full_cmd_args,
-                "CommandLineMode": "false",
+                "CommandLineMode": plugin_info.get("CommandLineMode", "false"),
             }
         )
+
+        # add auxilliary files to the job, if any
+        if auxilliary_files:
+            job_info['AuxFiles'] = auxilliary_files
 
         deadline_job.job_info = job_info
         deadline_job.plugin_info = plugin_info

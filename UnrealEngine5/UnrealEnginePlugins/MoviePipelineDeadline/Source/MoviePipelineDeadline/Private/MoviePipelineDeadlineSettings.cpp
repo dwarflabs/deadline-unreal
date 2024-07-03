@@ -4,7 +4,7 @@
 
 UMoviePipelineDeadlineSettings::UMoviePipelineDeadlineSettings()
 {
-	const TArray<FString> PropertiesToShowByDefault = {"Name", "Comment", "Department", "Pool", "Group", "Priority", "UserName"};
+	const TArray<FString> PropertiesToShowByDefault = {"Name", "Comment", "Department", "Priority", "UserName", "EnvironmentKeyValue"};
 	
 	// Set up default properties to show in MRQ
 	// We do this by setting everything to hide except some defined exceptions by name

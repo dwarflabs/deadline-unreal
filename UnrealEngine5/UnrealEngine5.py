@@ -11,6 +11,7 @@ from Deadline.Plugins import DeadlinePlugin, PluginType
 from FranticX.Processes import ManagedProcess
 from Deadline.Scripting import RepositoryUtils, FileUtils, StringUtils
 
+import DeadlineUnrealUtils
 from DeadlineRPC import (
     DeadlineRPCServerManager,
     DeadlineRPCServerThread,
@@ -97,9 +98,13 @@ class UnrealEnginePlugin(DeadlinePlugin):
         self.SingleFramesOnly = False
         self.StdoutHandling = True
         self.PluginType = PluginType.Advanced
-        self._commandline_mode = StringUtils.ParseBoolean(
-            self.GetPluginInfoEntryWithDefault("CommandLineMode", "true")
-        )
+
+        # determine if the job should be run in commandline or not
+        # can be overriden with environment variable OverrideCommandLineMode
+        # as plugin info cannot be easily modified on Deadline
+        self._commandline_mode = self.GetPluginInfoEntryWithDefault("CommandLineMode", "true")
+        self._commandline_mode = self.GetJob().GetJobEnvironmentKeyValue("OverrideCommandLineMode") or self._commandline_mode
+        self._commandline_mode = StringUtils.ParseBoolean(self._commandline_mode)
 
         if self._commandline_mode:
             self.AddStdoutHandlerCallback(
@@ -788,6 +793,17 @@ class UnrealEngineCmdManagedProcess(ManagedProcess):
 
         args = args.replace("\u201c", '"').replace("\u201d", '"')
 
+        # remove UI args that are added by default to be able
+        # to switch from commandline to UI mode directly on the job
+        args = args.replace("py mrq_rpc.py", "")
+
+        # write manifest file based on job infos
+        manifest_filepath = DeadlineUnrealUtils.write_manifest_file(
+            self._deadline_plugin,
+            for_cmdline=True,
+            project_root=os.path.dirname(project_file)
+        )
+
         startup_args = " ".join(
             [
                 '"{u_project}"'.format(u_project=project_file.as_posix()),
@@ -796,6 +812,11 @@ class UnrealEngineCmdManagedProcess(ManagedProcess):
                 "-unattended",
                 "-stdout",
                 "-allowstdoutlogverbosity",
+                "-renderoffscreen",
+                "-game",
+                "-messaging",
+                "-Multiprocess",
+                f'-MoviePipelineConfig="{manifest_filepath}"', # important to use double quotes for manifest path
             ]
         )
 

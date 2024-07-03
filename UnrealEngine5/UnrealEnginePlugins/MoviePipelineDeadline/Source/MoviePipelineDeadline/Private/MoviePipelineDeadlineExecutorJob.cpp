@@ -12,9 +12,13 @@ UMoviePipelineDeadlineExecutorJob::UMoviePipelineDeadlineExecutorJob()
 	{
 		if (const UMoviePipelineDeadlineSettings* MpdSettings = GetDefault<UMoviePipelineDeadlineSettings>())
 		{
-			if (const TObjectPtr<UDeadlineJobPreset> DefaultPreset = MpdSettings->DefaultJobPreset)
+			if (const TObjectPtr<UDeadlineJobPreset> DefaultPreset = MpdSettings->DefaultJobPreset.LoadSynchronous())
 			{
 				JobPreset = DefaultPreset;
+
+				// Set preset overrides here to mimic changing the property
+				// This is so the preset default values are correctly applied
+				this->PresetOverrides = JobPreset->JobPresetStruct;
 			}
 		}
 	}

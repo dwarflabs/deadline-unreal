@@ -32,8 +32,8 @@ public:
 	}
 
 	/** The project level Deadline preset Data Asset */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Pipeline Deadline")
-	TObjectPtr<UDeadlineJobPreset> DefaultJobPreset;	
+	UPROPERTY(Config, EditAnywhere, BlueprintReadWrite, Category = "Movie Pipeline Deadline")
+	TSoftObjectPtr<UDeadlineJobPreset> DefaultJobPreset;
 
 	void AddPropertyToHideInMovieRenderQueue(const FName& InPropertyPath)
 	{
