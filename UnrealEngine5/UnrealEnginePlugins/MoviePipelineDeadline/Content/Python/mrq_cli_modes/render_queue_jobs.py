@@ -96,6 +96,10 @@ def render_jobs(
         # and when rendering starts, the config is reset to the default saved one.
         job.set_configuration(config)
 
+        # set job user_data
+        user_data = os.environ.get("MRQ_user_data", "{}")
+        job.user_data = user_data
+
     if is_remote:
         setup_remote_render_jobs(
             remote_batch_name,

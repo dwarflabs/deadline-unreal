@@ -296,13 +296,21 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
 
             unreal.log(f"Submitting Job `{job.job_name}` to Deadline...")
 
+            # retrieve job's user_data
+            user_data = {}
+            try:
+                user_data = json.loads(job.user_data)
+            except json.decoder.JSONDecodeError as err:
+                # not a dict or empty, make it a dict
+                user_data = {"previous_user_data": job.user_data}
+
             try:
                 # Create a Deadline job object with the default project level
                 # job info and plugin info
                 deadline_job = DeadlineJob(project_job_info, project_plugin_info)
 
                 deadline_job_id = self.submit_job(
-                    job, deadline_job, command_args, deadline_service
+                    job, dict(user_data), deadline_job, command_args, deadline_service
                 )
 
             except Exception as err:
@@ -341,7 +349,8 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                 # Store the Deadline JobId in our job (the one that exists in
                 # the queue, not the duplicate) so we can match up Movie
                 # Pipeline jobs with status updates from Deadline.
-                job.user_data = deadline_job_id
+                user_data.setdefault("job_ids", []).append(deadline_job_id)
+                job.user_data = json.dumps(user_data)
 
         # Now that we've sent a job to Deadline, we're going to request a status
         # update on them so that they transition from "Ready" to "Queued" or
@@ -375,7 +384,7 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
         # type or parameter types.
         return False
 
-    def submit_job(self, job, deadline_job, command_args, deadline_service):
+    def submit_job(self, job, user_data, deadline_job, command_args, deadline_service):
         """
         Submit a new Job to Deadline
         :param job: Queued job to submit
@@ -459,7 +468,8 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
                 # replace environment variable with latest changelist number
                 if result == unreal.AppReturnType.YES:
                     cl_index = environment_key_indices['P4_CL']
-                    job_info[f"EnvironmentKeyValue{cl_index}"] = f"P4_CL={latest_cl['change']}"
+                    p4_cl = int(latest_cl['change'])
+                    job_info[f"EnvironmentKeyValue{cl_index}"] = f"P4_CL={p4_cl}"
                 # else raise
                 else:
                     unreal.log_error(err)
@@ -719,6 +729,21 @@ class MoviePipelineDeadlineRemoteExecutor(unreal.MoviePipelineExecutorBase):
 
         # Force override of output files, to avoid multiple files when task fails and restart
         job_info[f"EnvironmentKeyValue{current_env_index}"] = f"override_output=1"
+        current_env_index += 1
+
+        # finalize user_data to pass it to the Deadline job
+
+        # force field "remote" to True, since we're going to send it on farm
+        user_data["remote"] = True
+
+        # force field "CL" to final selected CL
+        user_data["CL"] = p4_cl
+
+        # remove job_ids entry, we don't need to send this to the farm
+        # it contains previous Deadline job ids sent from this MRQ job
+        user_data.pop("job_ids", None)
+
+        job_info[f"EnvironmentKeyValue{current_env_index}"] = f"MRQ_user_data={json.dumps(user_data)}"
         current_env_index += 1
 
         command_args.extend(["-nohmd", "-windowed"])
