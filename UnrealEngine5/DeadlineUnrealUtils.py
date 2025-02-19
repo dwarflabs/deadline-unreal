@@ -178,4 +178,4 @@ def write_manifest_file(deadline_plugin, for_cmdline=False, project_root=None):
     with open(manifest_filepath, "w") as manifest:
         manifest.write(serialized_pipeline_str)
 
-    return serialized_pipeline_str    
+    return manifest_filepath
