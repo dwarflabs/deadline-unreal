@@ -17,6 +17,17 @@ Description=What command line arguments should be passed to the executable?
 Required=false
 DisableIfBlank=false
 
+[StartupDirectory]
+Type=string
+Label=Startup Directory
+Category=Command Line Options
+CategoryOrder=0
+Index=3
+Description=The directory to start the command line in (leave blank to use default)
+Required=false
+Default=
+DisableIfBlank=true
+
 [ProjectFile]
 Type=String
 Label=Project File
@@ -41,19 +52,110 @@ DisableIfBlank=false
 Type=boolean
 Label=Command Line Mode
 Category=Project
-Index=1
+Index=2
 Description=Should the Editor process commands as commandline arguments
 Required=false
 DisableIfBlank=false
 Default=true
 
-[StartupDirectory]
+[ProgressRegex]
 Type=string
-Label=Startup Directory
-Category=Command Line Options
-CategoryOrder=0
+Label=Progress Regular Expression
+Category=Progress Log Parsing
 Index=3
-Description=The directory to start the command line in (leave blank to use default)
+Description=Regular Expressions to use for log progress parsing
 Required=false
-Default=
-DisableIfBlank=true
+DisableIfBlank=false
+Default=.*Progress: ([\d,\.]+)%.*
+
+[WarningRegex1]
+Type=string
+Label=Warning Regular Expressions Slot 1
+Category=Warning Log Parsing
+Index=9
+Description=Regular Expressions to use for log Warning parsing
+Required=false
+DisableIfBlank=false
+Default=Warning:.*
+
+[WarningRegex2]
+Type=string
+Label=Warning Regular Expressions Slot 2
+Category=Warning Log Parsing
+Index=10
+Description=Regular Expressions to use for log Warning parsing
+Required=false
+DisableIfBlank=false
+
+[WarningRegex3]
+Type=string
+Label=Warning Regular Expressions Slot 3
+Category=Warning Log Parsing
+Index=11
+Description=Regular Expressions to use for log Warning parsing
+Required=false
+DisableIfBlank=false
+
+[WarningRegex4]
+Type=string
+Label=Warning Regular Expressions Slot 4
+Category=Warning Log Parsing
+Index=12
+Description=Regular Expressions to use for log Warning parsing
+Required=false
+DisableIfBlank=false
+
+[WarningRegex5]
+Type=string
+Label=Warning Regular Expressions Slot 5
+Category=Warning Log Parsing
+Index=13
+Description=Regular Expressions to use for log Warning parsing
+Required=false
+DisableIfBlank=false
+
+[ErrorRegex1]
+Type=string
+Label=Error Regular Expressions Slot 1
+Category=Error Log Parsing
+Index=4
+Description=Regular Expressions to use for log Error parsing
+Required=false
+DisableIfBlank=false
+Default=LogPython: Error:.*
+
+[ErrorRegex2]
+Type=string
+Label=Error Regular Expressions Slot 2
+Category=Error Log Parsing
+Index=5
+Description=Regular Expressions to use for log Error parsing
+Required=false
+DisableIfBlank=false
+
+[ErrorRegex3]
+Type=string
+Label=Error Regular Expressions Slot 3
+Category=Error Log Parsing
+Index=6
+Description=Regular Expressions to use for log Error parsing
+Required=false
+DisableIfBlank=false
+
+[ErrorRegex4]
+Type=string
+Label=Error Regular Expressions Slot 4
+Category=Error Log Parsing
+Index=7
+Description=Regular Expressions to use for log Error parsing
+Required=false
+DisableIfBlank=false
+
+[ErrorRegex5]
+Type=string
+Label=Error Regular Expressions Slot 5
+Category=Error Log Parsing
+Index=8
+Description=Regular Expressions to use for log Error parsing
+Required=false
+DisableIfBlank=false

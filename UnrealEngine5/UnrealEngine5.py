@@ -106,14 +106,6 @@ class UnrealEnginePlugin(DeadlinePlugin):
         self._commandline_mode = self.GetJob().GetJobEnvironmentKeyValue("OverrideCommandLineMode") or self._commandline_mode
         self._commandline_mode = StringUtils.ParseBoolean(self._commandline_mode)
 
-        if self._commandline_mode:
-            self.AddStdoutHandlerCallback(
-                ".*Progress: (\d+)%.*"
-            ).HandleCallback += self._handle_progress
-            self.AddStdoutHandlerCallback(
-                ".*"
-            ).HandleCallback += self._handle_stdout
-
         self.LogInfo("Initialization complete!")
 
     def _on_start_job(self):
@@ -271,20 +263,6 @@ class UnrealEnginePlugin(DeadlinePlugin):
         if self._deadline_rpc_manager:
             self._deadline_rpc_manager.shutdown()
 
-    def _handle_stdout(self):
-        """
-        Handle stdout
-        """
-        self._deadline_plugin.LogInfo(self.GetRegexMatch(0))
-
-    def _handle_progress(self):
-        """
-        Handles any progress reports
-        :return:
-        """
-        progress = float(self.GetRegexMatch(1))
-        self.SetProgress(progress)
-
     def _get_startup_directory(self):
         """
         Get startup directory
@@ -301,6 +279,52 @@ class UnrealEnginePlugin(DeadlinePlugin):
 
             self.LogInfo("Startup Directory: {dir}".format(dir=startup_dir))
             return startup_dir.replace("\\", "/")
+
+    def initialize_log_handlers(self, process):
+        """
+        Initialize process log handlers.
+        """
+        # handle progress via specific regex
+        progress_regex = self.GetPluginInfoEntryWithDefault(
+            "ProgressRegex", ""
+        )
+        if progress_regex:
+            print(f"Add progress log parsing with regex: {progress_regex}")
+            process.AddStdoutHandlerCallback(
+                progress_regex
+            ).HandleCallback += process._handle_progress
+
+        # handle warnings via specific regex
+        for i in range(1, 6):
+            warning_regex = self.GetPluginInfoEntryWithDefault(
+                "WarningRegex%i"%i, ""
+            )
+
+            if warning_regex:
+                print(f"Add warning log parsing with regex: {warning_regex}")
+                process.AddStdoutHandlerCallback(
+                    warning_regex
+                ).HandleCallback += process._handle_stdout_warning
+
+        # handle errors via specific regex
+        for i in range(1, 6):
+            error_regex = self.GetPluginInfoEntryWithDefault(
+                "ErrorRegex%i"%i, ""
+            )
+
+            if error_regex:
+                print(f"Add error log parsing with regex: {error_regex}")
+                process.AddStdoutHandlerCallback(
+                    error_regex
+                ).HandleCallback += process._handle_stdout_error
+
+    def generic_handle_progress(self, process):
+        """
+        Handles any progress reports.
+        """
+        # handle floating progress using comma as decimal separator
+        progress = float(process.GetRegexMatch(1).replace(",", "."))
+        self.SetProgress(progress)
 
 
 class UnrealEngineManagedProcess(ManagedProcess):
@@ -373,14 +397,8 @@ class UnrealEngineManagedProcess(ManagedProcess):
         self.PopupHandling = False
         self.StdoutHandling = True
 
-        # Set the stdout handlers.
-
-        self.AddStdoutHandlerCallback(
-            "LogPython: Error:.*"
-        ).HandleCallback += self._handle_stdout_error
-        self.AddStdoutHandlerCallback(
-            "Warning:.*"
-        ).HandleCallback += self._handle_stdout_warning
+        # initialize log handlers
+        self._deadline_plugin.initialize_log_handlers(self)
 
         logs_dir = self._deadline_plugin.GetPluginInfoEntryWithDefault(
             "LoggingDirectory", ""
@@ -407,16 +425,23 @@ class UnrealEngineManagedProcess(ManagedProcess):
                 )
             )
 
-    def _handle_std_out(self):
-        self._deadline_plugin.LogInfo(self.GetRegexMatch(0))
-
-    # Callback for when a line of stdout contains a WARNING message.
     def _handle_stdout_warning(self):
+        """
+        Callback for when a line of stdout contains a WARNING message.
+        """
         self._deadline_plugin.LogWarning(self.GetRegexMatch(0))
 
-    # Callback for when a line of stdout contains an ERROR message.
     def _handle_stdout_error(self):
+        """
+        Callback for when a line of stdout contains an ERROR message.
+        """
         self._deadline_plugin.FailRender(self.GetRegexMatch(0))
+
+    def _handle_progress(self):
+        """
+        Handles any progress reports
+        """
+        self._deadline_plugin.generic_handle_progress(self)
 
     def render_task(self):
         """
@@ -644,11 +669,8 @@ class UnrealEngineCmdManagedProcess(ManagedProcess):
         if shell:
             self._shell = shell
 
-        self.AddStdoutHandlerCallback(
-            ".*Progress: (\d+)%.*"
-        ).HandleCallback += self._handle_progress
-
-        # self.AddStdoutHandlerCallback("LogPython: Error:.*").HandleCallback += self._handle_stdout_error
+        # initialize log handlers
+        self._deadline_plugin.initialize_log_handlers(self)
 
         # Get the current frames for the task
         current_task_frames = self._deadline_plugin.GetCurrentTask().TaskFrameString
@@ -656,11 +678,23 @@ class UnrealEngineCmdManagedProcess(ManagedProcess):
         # Set the frames sting as an environment variable
         self.SetEnvironmentVariable("CURRENT_RENDER_FRAMES", current_task_frames)
 
+    def _handle_stdout_warning(self):
+        """
+        Callback for when a line of stdout contains a WARNING message.
+        """
+        self._deadline_plugin.LogWarning(self.GetRegexMatch(0))
+
     def _handle_stdout_error(self):
         """
         Callback for when a line of stdout contains an ERROR message.
         """
         self._deadline_plugin.FailRender(self.GetRegexMatch(0))
+
+    def _handle_progress(self):
+        """
+        Handles any progress reports
+        """
+        self._deadline_plugin.generic_handle_progress(self)
 
     def _check_exit_code(self, exit_code):
         """
@@ -675,13 +709,6 @@ class UnrealEngineCmdManagedProcess(ManagedProcess):
         Startup directory
         """
         return self._startup_dir
-
-    def _handle_progress(self):
-        """
-        Handles progress reports
-        """
-        progress = float(self.GetRegexMatch(1))
-        self._deadline_plugin.SetProgress(progress)
 
     def _render_executable(self):
         """
