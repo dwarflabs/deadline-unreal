@@ -80,6 +80,7 @@ Click on **Render remote** and that's it :)
 - Fixed **DefaultJobPreset** to not be saved in the config.
 - Fixed auxilliary files key syntax in the Deadline command for sending jobs.
 - Improved log handling with optionnal regex in plugin infos. Allows to indicate custom regex to parse Unreal logs for progress, warnings and errors. Progress logging can be achieved using a custom executor in Unreal.
+- Unreal's job user_data is now transfered to the farm job. It can be used to store data to be used in certain processes of the render like the Burnin for example.
 
 
 # Further improvements ideas
@@ -95,3 +96,5 @@ Click on **Render remote** and that's it :)
 - Make an option to opt-in/out of shot packing.
 
 - Make an option for timeout type (frame or global).
+
+- Make Perforce dependency and CL syncing optionnal. Current implementation assumes workers need to sync their local workspace.
