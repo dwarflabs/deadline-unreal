@@ -131,8 +131,10 @@ def write_manifest_file(deadline_plugin, for_cmdline=False, project_root=None):
     # and move the render preset to another location otherwise the overrides are not taken into account
     #   move PresetOrigin from MoviePipelineQueue_X:MoviePipelineDeadlineExecutorJob_X
     #   to   ConfigOrigin in   MoviePipelineQueue_X:MoviePipelineDeadlineExecutorJob_X.DefaultConfig
+    # same for ShotOverride presets
     job_name = 'NoJobName'
     for key, value in serialized_pipeline.get('Exports', {}).items():
+        # is the job main entry ?
         if re.fullmatch("MoviePipelineQueue_\d+:MoviePipelineDeadlineExecutorJob_\d+", key):
             job_name = value.get('Properties', {}).get('JobName', {}).get('__Value', '')
 
@@ -154,7 +156,20 @@ def write_manifest_file(deadline_plugin, for_cmdline=False, project_root=None):
             apply_override_output_override(deadline_plugin, serialized_pipeline, key)
             apply_override_texture_streaming(deadline_plugin, serialized_pipeline, key)
 
-            break
+        # is a shot main entry ?
+        elif re.fullmatch("MoviePipelineQueue_\d+:MoviePipelineDeadlineExecutorJob_\d+\.MoviePipelineExecutorShot_\d+", key):
+            # search for field ShotOverridePresetOrigin
+            preset = value.get('Properties', {}).get('ShotOverridePresetOrigin')
+
+            # if found, need to move it to DefaultConfig
+            if preset:
+                del value['Properties']['ShotOverridePresetOrigin']
+
+                config_key = key + '.MoviePipelineShotConfig_0'
+                serialized_pipeline['Exports']\
+                    .setdefault(config_key, {})\
+                        .setdefault('Properties', {})\
+                            ['ConfigOrigin'] = preset
 
     # re-stringify the dict so we can write it in the file
     serialized_pipeline_str = json.dumps(serialized_pipeline, indent=4)
