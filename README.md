@@ -1,5 +1,5 @@
 # deadline-unreal
-Deadline and Unreal plugins to send Unreal jobs to Deadline.
+Deadline and Unreal plugins to send Unreal render jobs to Deadline.
 
 
 Improved version of the default plugins provided with Deadline 10.3.1.3.
@@ -79,13 +79,12 @@ Click on **Render remote** and that's it :)
 - Fixed **DeadlineJobPreset** overrides to not apply correctly when adding a job in the **MRQ**.
 - Fixed **DefaultJobPreset** to not be saved in the config.
 - Fixed auxilliary files key syntax in the Deadline command for sending jobs.
+- Improved log handling with optionnal regex in plugin infos. Allows to indicate custom regex to parse Unreal logs for progress, warnings and errors. Progress logging can be achieved using a custom executor in Unreal.
 
 
 # Further improvements ideas
 
 - Add support for Perforce streams. Current implementation is not ideal because changes needed for a render have to be pushed on the main branch, making them the new default for every users while sender may just want to "test" stuff without officially pushing that to the others.
- 
-- Find a way to indicate progress to Deadline. Custom executor ? Found this too: `unreal.MoviePipelineLibrary.get_completion_percentage()`
 
 - Add an option to write images local to the farmer, then copy to final destination on task end.
 
@@ -96,5 +95,3 @@ Click on **Render remote** and that's it :)
 - Make an option to opt-in/out of shot packing.
 
 - Make an option for timeout type (frame or global).
-
-- Improve error catching. Right now when Unreal crash, the job continues until the timeout stops it.
